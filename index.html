@@ -15,7 +15,7 @@
     -webkit-user-select: none;
     touch-action: none;
   }
-  #game { display: block; width: 100%; height: 100%; background: #04060f; cursor: crosshair; }
+  #game { display: block; width: 100%; height: 100%; background: #04060f; cursor: crosshair; touch-action: none; -webkit-touch-callout: none; }
 
   /* 顶部提示 */
   #hint {
@@ -67,11 +67,36 @@
     border-radius: 6px; padding: 1px 9px; margin: 0 2px; font-weight: 700; color: #fff;
   }
   .final-score { font-size: 30px; font-weight: 800; color: #ffd54a; letter-spacing: 2px; }
+
+  /* 暂停按钮（触屏 / 桌面通用） */
+  #pauseBtn {
+    position: fixed; top: 8px; right: 12px; z-index: 30;
+    width: 40px; height: 40px; border: none; cursor: pointer;
+    border-radius: 10px; color: #eaf6ff; font-size: 17px; font-weight: 800;
+    background: rgba(20,50,90,.72); border: 1px solid rgba(120,180,255,.35);
+    box-shadow: 0 2px 8px rgba(0,0,0,.4);
+    transition: background .15s, transform .1s;
+  }
+  #pauseBtn:hover { background: rgba(40,90,150,.85); }
+  #pauseBtn:active { transform: scale(.92); }
+
+  /* 移动端适配 */
+  @media (max-width: 600px) {
+    .title { font-size: 34px; letter-spacing: 4px; }
+    .subtitle { font-size: 12px; letter-spacing: 2px; }
+    .btn { padding: 12px 30px; font-size: 17px; letter-spacing: 3px; }
+    .controls { padding: 12px 14px; font-size: 13px; max-width: 92vw; line-height: 1.8; }
+    .stats { font-size: 14px; }
+    .stats b { font-size: 17px; }
+    .final-score { font-size: 24px; }
+    #hint { font-size: 11px; max-width: 90vw; white-space: normal; }
+  }
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
-<div id="hint">方向键 / WASD 移动 · 自动射击 · 按下空格或点击暂停</div>
+<button id="pauseBtn" title="暂停 / 继续" aria-label="暂停/继续">⏸</button>
+<div id="hint">拖动屏幕移动战机 · 自动射击 · 右上角按钮暂停</div>
 
 <!-- 开始界面 -->
 <div id="menu" class="screen">
@@ -79,8 +104,8 @@
   <div class="subtitle">THUNDER FIGHTER · 经典基础版</div>
   <button class="btn" id="startBtn">开始游戏</button>
   <div class="controls">
-    <div><span class="k">↑</span><span class="k">↓</span><span class="k">←</span><span class="k">→</span> 或 <span class="k">W</span><span class="k">A</span><span class="k">S</span><span class="k">D</span> 移动战机</div>
-    <div>飞机<b>自动开火</b>，无需按键 · <span class="k">空格</span>/<span class="k">点击</span> 暂停</div>
+    <div>📱 手机：<b>拖动屏幕</b>移动战机 &nbsp;·&nbsp; 💻 电脑：<span class="k">↑</span><span class="k">↓</span><span class="k">←</span><span class="k">→</span> 或 <span class="k">W</span><span class="k">A</span><span class="k">S</span><span class="k">D</span> 移动</div>
+    <div>飞机<b>自动开火</b>，无需按键 · 点<span class="k">右上角按钮</span>或按<span class="k">空格</span>暂停</div>
     <div>击败敌机得分 · 被撞损失一架，共 <b>3</b> 架战机</div>
     <div>闪避金色炸弹机可化身"无敌突击"，连撞敌机狂得分</div>
   </div>
@@ -160,6 +185,7 @@ const player = { x: 0, y: 0, w: 44, h: 44 };
 let bullets = [], enemies = [], particles = [], powerups = [], floats = [];
 
 let keys = {};
+let drag = null;             // 指针拖拽状态 { id, startX, startY, baseX, baseY }
 let lastTime = performance.now();
 let spawnTimer = 0, spawnInterval = 1.3;
 let starField = [];
@@ -191,6 +217,10 @@ function rand(a, b) { return a + Math.random() * (b - a); }
 function resetPlayer() {
   player.x = W / 2;
   player.y = H - 90;
+}
+function clampPlayer() {
+  player.x = Math.max(player.w / 2, Math.min(W - player.w / 2, player.x));
+  player.y = Math.max(player.h / 2 + 8, Math.min(H - 10, player.y));
 }
 function drawPlayer() {
   const cx = player.x, cy = player.y;
@@ -397,17 +427,18 @@ function update(dt) {
   if (invuln > 0) invuln = Math.max(0, invuln - dt);
 
   // 玩家移动
-  const spd = 340;
-  let dx = 0, dy = 0;
-  if (keys['arrowleft'] || keys['a']) dx -= 1;
-  if (keys['arrowright'] || keys['d']) dx += 1;
-  if (keys['arrowup'] || keys['w']) dy -= 1;
-  if (keys['arrowdown'] || keys['s']) dy += 1;
-  if (dx && dy) { const m = Math.SQRT1_2; dx *= m; dy *= m; }
-  player.x += dx * spd * dt;
-  player.y += dy * spd * dt;
-  player.x = Math.max(player.w / 2, Math.min(W - player.w / 2, player.x));
-  player.y = Math.max(player.h / 2 + 8, Math.min(H - 10, player.y));
+  if (!drag) {
+    const spd = 340;
+    let dx = 0, dy = 0;
+    if (keys['arrowleft'] || keys['a']) dx -= 1;
+    if (keys['arrowright'] || keys['d']) dx += 1;
+    if (keys['arrowup'] || keys['w']) dy -= 1;
+    if (keys['arrowdown'] || keys['s']) dy += 1;
+    if (dx && dy) { const m = Math.SQRT1_2; dx *= m; dy *= m; }
+    player.x += dx * spd * dt;
+    player.y += dy * spd * dt;
+  }
+  clampPlayer();
 
   // 自动开火
   fireTimer -= dt;
@@ -549,6 +580,7 @@ function hurt() {
     document.getElementById('finalScore').textContent = score;
     document.getElementById('finalNote').textContent = '击落敌机 x' + kills + ' · 最高连撞 x' + combo;
     document.getElementById('over').classList.remove('hidden');
+    updatePauseBtn();
   }
 }
 
@@ -621,7 +653,7 @@ function drawHUD() {
     ctx.font = '18px "Segoe UI", sans-serif'; ctx.fillStyle = '#cfefff';
     ctx.textAlign = 'center';
     for (let i = 0; i < lives; i++) {
-      const x = W - 60 - i * 30, y = 23;
+      const x = W - 100 - i * 30, y = 23;
       ctx.save(); ctx.translate(x, y);
       ctx.fillStyle = '#5fd4ff';
       ctx.beginPath(); ctx.moveTo(0, -9); ctx.lineTo(5, 4); ctx.lineTo(0, 9); ctx.lineTo(-5, 4); ctx.closePath(); ctx.fill();
@@ -660,6 +692,7 @@ function startGame() {
   state = 'play';
   document.getElementById('menu').classList.add('hidden');
   document.getElementById('over').classList.add('hidden');
+  updatePauseBtn();
   hideHint();
 }
 function hideHint() {
@@ -675,18 +708,49 @@ window.addEventListener('keydown', (e) => {
   if (['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k)) e.preventDefault();
 
   if (k === ' ' || k === 'enter' || k === 'p') {
-    if (state === 'play') { state = 'paused'; }
-    else if (state === 'paused') { state = 'play'; }
+    togglePause();
   }
 });
 window.addEventListener('keyup', (e) => { keys[(e.key || '').toLowerCase()] = false; });
 
-canvas.addEventListener('mousedown', () => {
-  if (state === 'play') { ensureAudio(); state = 'paused'; }
+// 暂停 / 继续
+function togglePause() {
+  ensureAudio();
+  if (state === 'play') { state = 'paused'; }
   else if (state === 'paused') { state = 'play'; }
-});
+  updatePauseBtn();
+}
+function updatePauseBtn() {
+  const b = document.getElementById('pauseBtn');
+  if (!b) return;
+  const playing = state === 'play' || state === 'paused';
+  b.style.display = playing ? '' : 'none';
+  b.textContent = state === 'paused' ? '▶' : '⏸';
+  b.title = state === 'paused' ? '继续' : '暂停';
+}
+document.getElementById('pauseBtn').addEventListener('click', togglePause);
 
-// 暂停覆盖提示
+// 触屏 / 鼠标 拖动移动（Pointer Events 统一处理）
+canvas.addEventListener('pointerdown', (e) => {
+  ensureAudio();
+  if (state === 'play' && drag === null) {
+    drag = { id: e.pointerId, startX: e.clientX, startY: e.clientY, baseX: player.x, baseY: player.y };
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+  }
+});
+canvas.addEventListener('pointermove', (e) => {
+  if (state === 'play' && drag && e.pointerId === drag.id) {
+    player.x = drag.baseX + (e.clientX - drag.startX);
+    player.y = drag.baseY + (e.clientY - drag.startY);
+    clampPlayer();
+  }
+});
+const endDrag = (e) => { if (drag && e.pointerId === drag.id) { drag = null; } };
+canvas.addEventListener('pointerup', endDrag);
+canvas.addEventListener('pointercancel', endDrag);
+canvas.addEventListener('pointerleave', endDrag);
+
+// 背景点击恢复音频（浏览器要求用户手势后才可出声）
 document.addEventListener('click', () => { ensureAudio(); });
 
 document.getElementById('startBtn').addEventListener('click', startGame);
@@ -695,6 +759,7 @@ document.getElementById('restartBtn').addEventListener('click', startGame);
 // ============ 初始化 ============
 resetPlayer();
 initStars();
+updatePauseBtn();
 requestAnimationFrame(loop);
 
 })();
