@@ -156,6 +156,9 @@
   </div>
 
   <button class="btn" id="startBtn">开始游戏</button>
+  <div class="btnrow">
+    <button class="btn ghost" id="testSoundBtn">🔊 试听声音</button>
+  </div>
 
   <div class="controls">
     <div>📱 手机：<b>拖动屏幕</b>或<b>摇杆</b>移动（右上角 ✋/🕹️ 切换） · 💻 电脑：<span class="k">↑</span><span class="k">↓</span><span class="k">←</span><span class="k">→</span> / <span class="k">W</span><span class="k">A</span><span class="k">S</span><span class="k">D</span></div>
@@ -1038,7 +1041,9 @@ canvas.addEventListener('pointerleave', endDrag);
 // 首次用户手势(任一)即解锁音频（手机/浏览器自动播放策略）
 const audioUnlock = () => unlockAudio();
 window.addEventListener('pointerdown', audioUnlock, { capture: true });
+window.addEventListener('pointerup', audioUnlock, { capture: true });
 window.addEventListener('touchstart', audioUnlock, { capture: true, passive: true });
+window.addEventListener('touchend', audioUnlock, { capture: true, passive: true });
 window.addEventListener('mousedown', audioUnlock, { capture: true });
 window.addEventListener('click', audioUnlock, { capture: true });
 window.addEventListener('keydown', audioUnlock, { capture: true });
@@ -1058,6 +1063,9 @@ function setupSelectors() {
 }
 document.getElementById('startBtn').addEventListener('click', startGame);
 document.getElementById('restartBtn').addEventListener('click', startGame);
+// 试听声音（直接用户手势，最可靠地验证音频通道）
+function playTestSound() { unlockAudio(); try { tone(660,660,0.15,'sine',0.6); } catch(e){} try { setTimeout(() => tone(990,990,0.16,'sine',0.5), 170); } catch(e){} }
+document.getElementById('testSoundBtn').addEventListener('click', playTestSound);
 setupSelectors();
 
 // ============ 初始化 ============
