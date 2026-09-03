@@ -135,7 +135,7 @@
 <!-- 开始界面 -->
 <div id="menu" class="screen">
   <div class="title">雷霆战机</div>
-  <div class="subtitle">THUNDER FIGHTER · 火力全开</div>
+  <div class="subtitle">THUNDER FIGHTER · 火力全开 · v4</div>
 
   <div class="selector">
     <div class="sel-label">难度</div>
@@ -197,79 +197,68 @@ window.addEventListener('resize', resize);
 resize();
 
 // ============ 音效（Web Audio 合成） ============
-let audioCtx = null;
-let soundOn = true;
-let audioReady = false;    // 是否已通过用户手势激活音频通道
+let audioCtx = null, masterGain = null;
+let soundOn = true, audioReady = false;
 function ensureAudio() {
-  if (!audioCtx) { try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { audioCtx = null; } }
+  if (!audioCtx) {
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      masterGain = audioCtx.createGain(); masterGain.gain.value = 0.9; masterGain.connect(audioCtx.destination);
+    } catch (e) { audioCtx = null; }
+  }
 }
 function unlockAudio() {
   ensureAudio();
   if (!audioCtx) return;
   if (audioCtx.state === 'suspended') { try { audioCtx.resume(); } catch (e) {} }
-  // iOS / 安卓：在用户手势内播放一次近静音，强制浏览器"激活"声音
+  // 首次：播一次"解锁提示音"（可听），确认音频通道已激活
   if (!audioReady) {
-    try {
-      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
-      g.gain.value = 0.0001;
-      o.connect(g); g.connect(audioCtx.destination);
-      o.start(); o.stop(audioCtx.currentTime + 0.02);
-    } catch (e) {}
+    try { tone(660, 660, 0.12, 'sine', 0.5); } catch (e) {}
+    try { setTimeout(() => { try { tone(990, 990, 0.12, 'sine', 0.42); } catch (e) {} }, 130); } catch (e) {}
     audioReady = true;
   }
 }
-function beep(f0, f1, dur, type, vol) {
-  if (!audioCtx || !soundOn) return;
+function tone(f0, f1, dur, type, vol) {
+  if (!audioCtx || !soundOn || !masterGain) return;
   if (audioCtx.state === 'suspended') { try { audioCtx.resume(); } catch (e) {} }
   const now = audioCtx.currentTime;
   const o = audioCtx.createOscillator(), g = audioCtx.createGain();
   o.type = type || 'square';
   o.frequency.setValueAtTime(f0, now);
-  o.frequency.exponentialRampToValueAtTime(Math.max(f1, 1), now + dur);
-  g.gain.setValueAtTime(vol, now);
+  if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(Math.max(f1, 1), now + dur);
+  g.gain.setValueAtTime(0.0001, now);
+  g.gain.exponentialRampToValueAtTime(vol, now + 0.012);
   g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
-  o.connect(g); g.connect(audioCtx.destination);
+  o.connect(g); g.connect(masterGain);
   o.start(now); o.stop(now + dur + 0.02);
 }
 const sfx = {
-  shoot: () => { beep(720, 300, 0.06, 'square', 0.17); beep(140, 90, 0.05, 'sine', 0.22); },
-  boom:  () => beep(230, 40, 0.4, 'sawtooth', 0.42),
-  hurt:  () => beep(300, 60, 0.5, 'sawtooth', 0.5),
-  power: () => { beep(600, 1400, 0.22, 'triangle', 0.34); },
-  shield:() => { beep(500, 900, 0.2, 'sine', 0.34); },
-  bomb:  () => { beep(180, 30, 0.8, 'sawtooth', 0.5); },
-  boss:  () => { beep(120, 60, 0.7, 'sawtooth', 0.45); },
-  hit:   () => { beep(700, 200, 0.12, 'square', 0.11); },
-  combo: () => { beep(520, 1050, 0.12, 'triangle', 0.2); },
+  shoot: () => { tone(880, 320, 0.07, 'square', 0.5); tone(170, 95, 0.06, 'sine', 0.6); },
+  boom:  () => tone(240, 40, 0.4, 'sawtooth', 0.8),
+  hurt:  () => tone(320, 60, 0.5, 'sawtooth', 0.9),
+  power: () => { tone(600, 1400, 0.22, 'triangle', 0.6); },
+  shield:() => tone(500, 900, 0.2, 'sine', 0.6),
+  bomb:  () => tone(180, 30, 0.8, 'sawtooth', 0.9),
+  boss:  () => tone(120, 60, 0.7, 'sawtooth', 0.8),
+  hit:   () => tone(700, 200, 0.12, 'square', 0.4),
+  combo: () => tone(520, 1050, 0.12, 'triangle', 0.6),
 };
 
 // 背景音乐（简单五声音阶循环，随音效开关一起控制）
-let music = { timer: null, master: null, idx: 0 };
+let music = { timer: null, idx: 0 };
 const MUSIC_NOTES = [ 0, 3, 5, 7, 10, 12, 10, 7, 5, 3 ];
 function startMusic() {
   if (!audioCtx || !soundOn || music.timer) return;
   try {
-    const ctx = audioCtx;
-    music.master = ctx.createGain(); music.master.gain.value = 0.06; music.master.connect(ctx.destination);
     music.idx = 0;
     music.timer = setInterval(() => {
       if (!soundOn || state !== 'play') return;
-      const now = ctx.currentTime, base = 220;
-      const o = ctx.createOscillator(), g = ctx.createGain();
-      o.type = 'triangle';
-      o.frequency.value = base * Math.pow(2, MUSIC_NOTES[music.idx++ % MUSIC_NOTES.length] / 12);
-      g.gain.setValueAtTime(0.0001, now);
-      g.gain.exponentialRampToValueAtTime(0.55, now + 0.03);
-      g.gain.exponentialRampToValueAtTime(0.0001, now + 0.4);
-      o.connect(g); g.connect(music.master);
-      o.start(now); o.stop(now + 0.45);
+      const base = 220, semis = MUSIC_NOTES[music.idx++ % MUSIC_NOTES.length];
+      tone(base * Math.pow(2, semis / 12), base * Math.pow(2, semis / 12), 0.42, 'triangle', 0.32);
     }, 300);
   } catch (e) {}
 }
-function stopMusic() {
-  if (music.timer) { clearInterval(music.timer); music.timer = null; }
-  if (music.master) { try { music.master.disconnect(); } catch (e) {} music.master = null; }
-}
+function stopMusic() { if (music.timer) { clearInterval(music.timer); music.timer = null; } }
 
 // ============ 状态 ============
 let state = 'menu';      // menu | play | paused | over
