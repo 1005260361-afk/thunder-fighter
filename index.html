@@ -201,7 +201,7 @@ let audioCtx = null;
 let soundOn = true;
 function ensureAudio() {
   if (!audioCtx) { try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { audioCtx = null; } }
-  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  if (audioCtx && audioCtx.state === 'suspended') { try { audioCtx.resume(); } catch (e) {} }
 }
 function beep(f0, f1, dur, type, vol) {
   if (!audioCtx || !soundOn) return;
@@ -216,15 +216,44 @@ function beep(f0, f1, dur, type, vol) {
   o.start(now); o.stop(now + dur + 0.02);
 }
 const sfx = {
-  shoot: () => beep(880, 320, 0.08, 'square', 0.045),
-  boom:  () => beep(220, 40, 0.4, 'sawtooth', 0.2),
-  hurt:  () => beep(300, 60, 0.5, 'sawtooth', 0.28),
-  power: () => { beep(600, 1400, 0.22, 'triangle', 0.22); },
-  shield:() => { beep(500, 900, 0.2, 'sine', 0.22); },
-  bomb:  () => { beep(180, 30, 0.8, 'sawtooth', 0.34); },
-  boss:  () => { beep(120, 60, 0.7, 'sawtooth', 0.3); },
-  hit:   () => { beep(700, 200, 0.12, 'square', 0.06); },
+  shoot: () => beep(880, 340, 0.07, 'square', 0.13),
+  boom:  () => beep(230, 40, 0.4, 'sawtooth', 0.4),
+  hurt:  () => beep(300, 60, 0.5, 'sawtooth', 0.5),
+  power: () => { beep(600, 1400, 0.22, 'triangle', 0.34); },
+  shield:() => { beep(500, 900, 0.2, 'sine', 0.34); },
+  bomb:  () => { beep(180, 30, 0.8, 'sawtooth', 0.5); },
+  boss:  () => { beep(120, 60, 0.7, 'sawtooth', 0.45); },
+  hit:   () => { beep(700, 200, 0.12, 'square', 0.11); },
+  combo: () => { beep(520, 1050, 0.12, 'triangle', 0.2); },
 };
+
+// 背景音乐（简单五声音阶循环，随音效开关一起控制）
+let music = { timer: null, master: null, idx: 0 };
+const MUSIC_NOTES = [ 0, 3, 5, 7, 10, 12, 10, 7, 5, 3 ];
+function startMusic() {
+  if (!audioCtx || !soundOn || music.timer) return;
+  try {
+    const ctx = audioCtx;
+    music.master = ctx.createGain(); music.master.gain.value = 0.045; music.master.connect(ctx.destination);
+    music.idx = 0;
+    music.timer = setInterval(() => {
+      if (!soundOn || state !== 'play') return;
+      const now = ctx.currentTime, base = 220;
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = 'triangle';
+      o.frequency.value = base * Math.pow(2, MUSIC_NOTES[music.idx++ % MUSIC_NOTES.length] / 12);
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.exponentialRampToValueAtTime(0.55, now + 0.03);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + 0.4);
+      o.connect(g); g.connect(music.master);
+      o.start(now); o.stop(now + 0.45);
+    }, 300);
+  } catch (e) {}
+}
+function stopMusic() {
+  if (music.timer) { clearInterval(music.timer); music.timer = null; }
+  if (music.master) { try { music.master.disconnect(); } catch (e) {} music.master = null; }
+}
 
 // ============ 状态 ============
 let state = 'menu';      // menu | play | paused | over
@@ -248,9 +277,9 @@ let highScore = Number(lsGet('thunder-hs') || 0);
 
 // 配置
 const DIFFS = {
-  easy:   { label:'简单', hp:0.8, speed:0.85, spawn:1.6,  bossHp:0.8 },
-  normal: { label:'普通', hp:1.0, speed:1.0,  spawn:1.12, bossHp:1.0 },
-  hard:   { label:'困难', hp:1.4, speed:1.2,  spawn:0.85, bossHp:1.5 },
+  easy:   { label:'简单', hp:1.0, speed:0.95, spawn:1.25, bossHp:1.0 },
+  normal: { label:'普通', hp:1.35, speed:1.12, spawn:0.92, bossHp:1.4 },
+  hard:   { label:'困难', hp:1.9, speed:1.35, spawn:0.68, bossHp:2.1 },
 };
 const SHIPS = {
   balance:{ name:'均衡型', speed:340, fireRate:0.16, dmg:0, w:44, h:44, c1:'#5fd4ff', c2:'#1b78c9', c3:'#eaf9ff', startShield:0 },
@@ -261,16 +290,31 @@ function curShip() { return SHIPS[shipKey]; }
 function curDiff() { return DIFFS[difficulty]; }
 
 // 武器弹型（由武器等级决定）
-const MAX_WEAPON = 5;
-const BASE_DMG = { straight:1, pierce:2, homing:2, laser:3 };
+const MAX_WEAPON = 9;
+const BASE_DMG = { straight:1, pierce:2, homing:2, laser:4 };
 const WEAPON_PATTERNS = [
-  [ {ang:0}, ],                                                                  // 0 单发
-  [ {ang:-0.06}, {ang:0.06} ],                                                   // 1 双发
-  [ {ang:-0.17}, {ang:0}, {ang:0.17} ],                                          // 2 三向
-  [ {ang:-0.24,kind:'pierce'}, {ang:-0.08}, {ang:0}, {ang:0.08}, {ang:0.24,kind:'pierce'} ], // 3 五向+穿透
-  [ {ang:-0.28,kind:'pierce'}, {ang:-0.1,kind:'homing'}, {ang:0}, {ang:0.1,kind:'homing'}, {ang:0.28,kind:'pierce'} ], // 4 追踪+穿透
-  [ {ang:-0.32,kind:'laser'}, {ang:-0.12,kind:'homing'}, {ang:0,kind:'pierce'}, {ang:0.12,kind:'homing'}, {ang:0.32,kind:'laser'} ], // 5 终极
+  [ {ang:0} ],                                                                              // 0 单发
+  [ {ang:-0.05}, {ang:0.05} ],                                                              // 1 双发
+  [ {ang:-0.16}, {ang:0}, {ang:0.16} ],                                                     // 2 三向
+  [ {ang:-0.22,kind:'pierce'}, {ang:-0.07}, {ang:0}, {ang:0.07}, {ang:0.22,kind:'pierce'} ],// 3 五向+穿透
+  [ {ang:-0.26,kind:'pierce'}, {ang:-0.1,kind:'homing'}, {ang:0}, {ang:0.1,kind:'homing'}, {ang:0.26,kind:'pierce'} ], // 4 追踪+穿透
+  [ {ang:-0.3,kind:'laser'}, {ang:-0.14,kind:'pierce'}, {ang:0}, {ang:0.14,kind:'pierce'}, {ang:0.3,kind:'laser'} ],   // 5 激光阵
+  [ {ang:-0.36,kind:'laser'}, {ang:-0.18,kind:'homing'}, {ang:-0.06}, {ang:0.06}, {ang:0.18,kind:'homing'}, {ang:0.36,kind:'laser'} ], // 6 双侧激光
+  [ {ang:-0.42,kind:'laser'}, {ang:-0.24,kind:'pierce'}, {ang:-0.08,kind:'homing'}, {ang:0}, {ang:0.08,kind:'homing'}, {ang:0.24,kind:'pierce'}, {ang:0.42,kind:'laser'} ], // 7 弹幕
+  [ {ang:-0.5,kind:'laser'}, {ang:-0.3,kind:'laser'}, {ang:-0.14,kind:'pierce'}, {ang:0}, {ang:0.14,kind:'pierce'}, {ang:0.3,kind:'laser'}, {ang:0.5,kind:'laser'} ], // 8 爆发
+  [ {ang:-0.55,kind:'laser'}, {ang:-0.4,kind:'laser'}, {ang:-0.24,kind:'pierce'}, {ang:-0.08,kind:'homing'}, {ang:0.08,kind:'homing'}, {ang:0.24,kind:'pierce'}, {ang:0.4,kind:'laser'}, {ang:0.55,kind:'laser'} ], // 9 终极
 ];
+
+// 关卡主题（随关卡循环切换背景/星星/装饰星球）
+const THEMES = [
+  { name:'深空',   top:'#06091a', bot:'#04060f', star:'#5a7aa8', planet:'#3b4a7a' },
+  { name:'星云',   top:'#0a0a26', bot:'#1a0a30', star:'#b58af5', planet:'#7a3bff' },
+  { name:'烈焰',   top:'#1a0606', bot:'#2e0a0a', star:'#ff8f6a', planet:'#d13a2a' },
+  { name:'极光',   top:'#061a18', bot:'#0a2e24', star:'#7ff5d0', planet:'#2ad1a0' },
+  { name:'黄昏',   top:'#1a0f06', bot:'#2e1a0a', star:'#ffd27f', planet:'#ff9d3c' },
+  { name:'冰晶',   top:'#06121a', bot:'#0a1e2e', star:'#a3e4ff', planet:'#4aa0ff' },
+];
+function curTheme() { return THEMES[(level - 1) % THEMES.length]; }
 
 // 实体
 const player = { x: 0, y: 0, w: 44, h: 44 };
@@ -283,6 +327,8 @@ let lastTime = performance.now();
 let spawnTimer = 0, spawnInterval = 1.1;
 let waveTarget = 0, waveSpawned = 0;   // 当前波次目标与已生成
 let bossDead = false, bossWaited = false;
+let shake = 0;               // 屏幕震动强度
+let comboTimer = 0;          // 连杀计时
 let starField = [];
 
 // ============ 背景星空 ============
@@ -355,8 +401,8 @@ function spawnPlayerBullet() {
     bullets.push({
       x: player.x, y: player.y - 16,
       vx: Math.sin(ang) * speed, vy: -Math.cos(ang) * speed,
-      w: kind === 'laser' ? 8 : 6, h: kind === 'laser' ? 24 : 16,
-      r: kind === 'laser' ? 8 : 5,
+      w: kind === 'laser' ? 9 : 7, h: kind === 'laser' ? 26 : 17,
+      r: kind === 'laser' ? 9 : 6,
       damage: (BASE_DMG[kind] || 1) + ship.dmg,
       kind, ttl: kind === 'homing' ? 2.6 : 2.2,
       hit: new Set(), angle: ang,
@@ -366,21 +412,23 @@ function spawnPlayerBullet() {
 }
 function drawBullet(b) {
   ctx.save();
-  if (b.kind === 'laser') {
-    const g = ctx.createLinearGradient(b.x, b.y, b.x, b.y + b.h);
-    g.addColorStop(0, '#fff'); g.addColorStop(1, '#c86bff');
-    ctx.fillStyle = g;
-    ctx.fillRect(b.x - b.w / 2, b.y, b.w, b.h);
-  } else if (b.kind === 'homing') {
-    ctx.fillStyle = '#7dffd0';
-    ctx.beginPath(); ctx.arc(b.x, b.y, 4, 0, Math.PI * 2); ctx.fill();
-  } else {
-    const g = ctx.createLinearGradient(b.x, b.y, b.x, b.y + b.h);
-    if (b.kind === 'pierce') { g.addColorStop(0, '#ffe27a'); g.addColorStop(1, '#ff7f2a'); }
-    else { g.addColorStop(0, '#d8f4ff'); g.addColorStop(1, '#2aa4ff'); }
-    ctx.fillStyle = g;
-    ctx.fillRect(b.x - b.w / 2, b.y, b.w, b.h);
-  }
+  const glow = b.kind === 'laser' ? '#c86bff' : b.kind === 'pierce' ? '#ff9d3c' : b.kind === 'homing' ? '#7dffd0' : '#3aa4ff';
+  ctx.shadowColor = glow; ctx.shadowBlur = 14; ctx.lineCap = 'round';
+  // 拖尾
+  const tx = b.x - b.vx * 0.035, ty = b.y - b.vy * 0.035;
+  const tg = ctx.createLinearGradient(tx, ty, b.x, b.y);
+  tg.addColorStop(0, 'rgba(0,0,0,0)'); tg.addColorStop(1, glow);
+  ctx.strokeStyle = tg; ctx.lineWidth = b.w * 0.85;
+  ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(b.x, b.y); ctx.stroke();
+  // 弹体
+  ctx.fillStyle = glow;
+  if (b.kind === 'homing' || b.kind === 'laser') { ctx.beginPath(); ctx.arc(b.x, b.y, b.kind === 'laser' ? 6 : b.r, 0, Math.PI * 2); ctx.fill(); }
+  else { ctx.fillRect(b.x - b.w / 2, b.y, b.w, b.h); }
+  ctx.shadowBlur = 0;
+  // 亮心
+  ctx.fillStyle = '#fff';
+  if (b.kind === 'laser') { ctx.fillRect(b.x - 2, b.y - 3, 4, b.h + 6); }
+  else { ctx.beginPath(); ctx.arc(b.x, b.y, 2.5, 0, Math.PI * 2); ctx.fill(); }
   ctx.restore();
 }
 function nearestEnemyPoint(x, y) {
@@ -568,10 +616,10 @@ function applyPowerup(p) {
   if (type === 'power') { weapon = Math.min(MAX_WEAPON, weapon + 1); addFloat(p.x, p.y, '火力升级! Lv.' + weapon, '#ffe27a'); }
   else if (type === 'shield') { shield = Math.min(3, shield + 1); addFloat(p.x, p.y, '护盾 +1', '#7fe0ff'); }
   else if (type === 'bomb') {
-    for (let i = enemies.length - 1; i >= 0; i--) { burst(enemies[i].x, enemies[i].y, 16, true); score += enemies[i].scoreVal; kills++; }
+    for (let i = enemies.length - 1; i >= 0; i--) { burst(enemies[i].x, enemies[i].y, 16, true); score += enemies[i].scoreVal; kills++; bumpCombo(); }
     enemies = [];
     if (boss && !bossDead) { boss.hp -= Math.round(boss.maxHp * 0.25); burst(boss.x, boss.y, 30, true); addFloat(boss.x, boss.y, 'BOSS -25%', '#ff8fbf'); }
-    ebullets = [];
+    ebullets = []; shake = Math.max(shake, 10);
     addFloat(player.x, player.y - 30, '清屏炸弹!', '#ff6a4a'); sfx.bomb();
   }
   else if (type === 'score') { scoreMult = 8; addFloat(p.x, p.y, '双倍得分 ×2', '#ffd54a'); }
@@ -600,7 +648,8 @@ function startLevel() {
 function clearBossCheck() {
   if (boss && boss.hp <= 0 && !bossDead) {
     bossDead = true; burst(boss.x, boss.y, 60, true); addFloat(boss.x, boss.y, 'BOSS 击破!', '#ffd54a');
-    score += 1000 + level * 200; sfx.bomb(); powerups.length = 0;
+    score += 1000 + level * 200; kills++; bumpCombo(); shake = Math.max(shake, 20);
+    sfx.bomb(); powerups.length = 0;
     spawnPowerup(boss.x, 'power'); spawnPowerup(boss.x - 30, 'life'); spawnPowerup(boss.x + 30, 'bomb');
     boss = null; bossWaited = false;
   }
@@ -613,6 +662,8 @@ function update(dt) {
   if (powerTime > 0) powerTime = Math.max(0, powerTime - dt);
   if (invuln > 0) invuln = Math.max(0, invuln - dt);
   if (scoreMult > 0) scoreMult = Math.max(0, scoreMult - dt);
+  if (shake > 0) shake = Math.max(0, shake - dt * 32);
+  if (comboTimer > 0) { comboTimer -= dt; if (comboTimer <= 0) combo = 0; }
 
   // 移动
   const ship = curShip();
@@ -722,7 +773,7 @@ function update(dt) {
       burst(e.x, e.y, 20, false); enemies.splice(i, 1); continue;
     }
     if (powerTime > 0) {
-      burst(e.x, e.y, 16, true); combo++; addFloat(e.x, e.y, '+' + (e.scoreVal * 2), '#ffd54a');
+      burst(e.x, e.y, 16, true); bumpCombo(); addFloat(e.x, e.y, '+' + (e.scoreVal * 2), '#ffd54a');
       score += e.scoreVal * 2; kills++; sfx.boom();
       spawnPowerup(e.x); enemies.splice(i, 1); continue;
     }
@@ -740,9 +791,19 @@ function update(dt) {
   for (let i = floats.length - 1; i >= 0; i--) { const f = floats[i]; f.y -= 40 * dt; f.ttl -= dt; if (f.ttl <= 0) floats.splice(i, 1); }
 }
 function scaleScore(v) { return scoreMult > 0 ? v * 2 : v; }
+// 连杀计分
+function bumpCombo() {
+  combo++; comboTimer = 2;
+  if (combo >= 4) {
+    const bonus = combo * 10;
+    score += bonus;
+    addFloat(player.x, player.y - 32, '连杀 x' + combo + ' +' + bonus, '#ffd54a');
+    sfx.combo();
+  }
+}
 function destroyEnemy(idx, e) {
   burst(e.x, e.y, e.type === 'tank' ? 26 : 14, e.type === 'tank');
-  score += scaleScore(e.scoreVal); kills++;
+  score += scaleScore(e.scoreVal); kills++; bumpCombo();
   addFloat(e.x, e.y, '+' + scaleScore(e.scoreVal), '#cfefff'); sfx.boom();
   if (Math.random() < 0.14) spawnPowerup(e.x);
   enemies.splice(idx, 1);
@@ -758,11 +819,12 @@ function damagePlayer() {
 }
 function hurt() {
   lives--; invuln = 1.5; combo = 0; weapon = Math.max(0, weapon - 1);
+  shake = Math.max(shake, 12);
   burst(player.x, player.y, 22, true); addFloat(player.x, player.y - 20, '战机受损!', '#ff6a5a'); sfx.hurt();
   if (lives <= 0) { gameOver(); }
 }
 function gameOver() {
-  state = 'over';
+  state = 'over'; stopMusic();
   if (score > highScore) { highScore = score; lsSet('thunder-hs', String(highScore)); }
   document.getElementById('finalScore').textContent = score;
   document.getElementById('finalNote').textContent = '击落敌机 x' + kills + ' · 到达第 ' + level + ' 波';
@@ -774,10 +836,24 @@ function gameOver() {
 // ============ 绘制 ============
 function draw() {
   ctx.clearRect(0, 0, W, H);
+  // 屏幕震动（世界层整体偏移, HUD 稳定）
+  ctx.save();
+  if (shake > 0) {
+    ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
+  }
+  const theme = curTheme();
   const bg = ctx.createLinearGradient(0, 0, 0, H);
-  bg.addColorStop(0, '#06091a'); bg.addColorStop(1, '#04060f');
-  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
-  for (const s of starField) { ctx.fillStyle = s.c; ctx.globalAlpha = 0.85; ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI*2); ctx.fill(); }
+  bg.addColorStop(0, theme.top); bg.addColorStop(1, theme.bot);
+  ctx.fillStyle = bg; ctx.fillRect(-30, -30, W + 60, H + 60);
+  // 装饰星球
+  const pr = Math.min(W, H) * 0.14, px = W * 0.82, py = H * 0.22;
+  ctx.globalAlpha = 0.55; ctx.fillStyle = theme.planet;
+  ctx.beginPath(); ctx.arc(px, py, pr, 0, Math.PI * 2); ctx.fill();
+  ctx.globalAlpha = 0.2; ctx.fillStyle = '#000';
+  ctx.beginPath(); ctx.arc(px - pr * 0.3, py - pr * 0.2, pr * 0.7, 0, Math.PI * 2); ctx.fill();
+  ctx.globalAlpha = 1;
+  // 星星（主题色）
+  for (const s of starField) { ctx.fillStyle = theme.star; ctx.globalAlpha = 0.85; ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI*2); ctx.fill(); }
   ctx.globalAlpha = 1;
 
   for (const p of powerups) drawPowerup(p);
@@ -790,6 +866,7 @@ function draw() {
   ctx.globalAlpha = 1;
   for (const f of floats) { ctx.globalAlpha = Math.max(0, f.ttl / 0.9); ctx.fillStyle = f.color; ctx.font = 'bold 20px sans-serif'; ctx.textAlign='center'; ctx.shadowColor='#000'; ctx.shadowBlur=4; ctx.fillText(f.text, f.x, f.y); }
   ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+  ctx.restore();
 
   drawJoystick();
   drawHUD();
@@ -868,6 +945,7 @@ function startGame() {
   resetPlayer(); initStars();
   startLevel();
   state = 'play';
+  stopMusic(); startMusic();
   document.getElementById('menu').classList.add('hidden');
   document.getElementById('over').classList.add('hidden');
   updatePauseBtn(); hideHint();
@@ -885,14 +963,14 @@ function updatePauseBtn() {
 function updateSoundBtn() { document.getElementById('soundBtn').textContent = soundOn ? '🔊' : '🔇'; }
 function updateCtrlBtn() { document.getElementById('ctrlBtn').textContent = joyMode ? '🕹️' : '✋'; }
 document.getElementById('pauseBtn').addEventListener('click', togglePause);
-document.getElementById('soundBtn').addEventListener('click', () => { soundOn = !soundOn; ensureAudio(); updateSoundBtn(); });
+document.getElementById('soundBtn').addEventListener('click', () => { soundOn = !soundOn; ensureAudio(); if (soundOn && state === 'play') startMusic(); updateSoundBtn(); });
 document.getElementById('ctrlBtn').addEventListener('click', () => { joyMode = !joyMode; joy.active = false; drag = null; updateCtrlBtn(); });
 document.getElementById('quitBtn').addEventListener('click', returnToMenu);
 document.getElementById('menuBtn').addEventListener('click', returnToMenu);
 
 // 退出/回到主菜单
 function returnToMenu() {
-  state = 'menu';
+  state = 'menu'; stopMusic();
   drag = null; joy.active = false; joy.dx = 0; joy.dy = 0;
   document.getElementById('over').classList.add('hidden');
   document.getElementById('menu').classList.remove('hidden');
