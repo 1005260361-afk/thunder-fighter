@@ -199,12 +199,28 @@ resize();
 // ============ 音效（Web Audio 合成） ============
 let audioCtx = null;
 let soundOn = true;
+let audioReady = false;    // 是否已通过用户手势激活音频通道
 function ensureAudio() {
   if (!audioCtx) { try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { audioCtx = null; } }
-  if (audioCtx && audioCtx.state === 'suspended') { try { audioCtx.resume(); } catch (e) {} }
+}
+function unlockAudio() {
+  ensureAudio();
+  if (!audioCtx) return;
+  if (audioCtx.state === 'suspended') { try { audioCtx.resume(); } catch (e) {} }
+  // iOS / 安卓：在用户手势内播放一次近静音，强制浏览器"激活"声音
+  if (!audioReady) {
+    try {
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      g.gain.value = 0.0001;
+      o.connect(g); g.connect(audioCtx.destination);
+      o.start(); o.stop(audioCtx.currentTime + 0.02);
+    } catch (e) {}
+    audioReady = true;
+  }
 }
 function beep(f0, f1, dur, type, vol) {
   if (!audioCtx || !soundOn) return;
+  if (audioCtx.state === 'suspended') { try { audioCtx.resume(); } catch (e) {} }
   const now = audioCtx.currentTime;
   const o = audioCtx.createOscillator(), g = audioCtx.createGain();
   o.type = type || 'square';
@@ -216,8 +232,8 @@ function beep(f0, f1, dur, type, vol) {
   o.start(now); o.stop(now + dur + 0.02);
 }
 const sfx = {
-  shoot: () => beep(880, 340, 0.07, 'square', 0.13),
-  boom:  () => beep(230, 40, 0.4, 'sawtooth', 0.4),
+  shoot: () => { beep(720, 300, 0.06, 'square', 0.17); beep(140, 90, 0.05, 'sine', 0.22); },
+  boom:  () => beep(230, 40, 0.4, 'sawtooth', 0.42),
   hurt:  () => beep(300, 60, 0.5, 'sawtooth', 0.5),
   power: () => { beep(600, 1400, 0.22, 'triangle', 0.34); },
   shield:() => { beep(500, 900, 0.2, 'sine', 0.34); },
@@ -234,7 +250,7 @@ function startMusic() {
   if (!audioCtx || !soundOn || music.timer) return;
   try {
     const ctx = audioCtx;
-    music.master = ctx.createGain(); music.master.gain.value = 0.045; music.master.connect(ctx.destination);
+    music.master = ctx.createGain(); music.master.gain.value = 0.06; music.master.connect(ctx.destination);
     music.idx = 0;
     music.timer = setInterval(() => {
       if (!soundOn || state !== 'play') return;
@@ -935,7 +951,7 @@ function loop(now) {
 
 // ============ 开始 / 重置 ============
 function startGame() {
-  ensureAudio();
+  unlockAudio();
   score = 0; kills = 0; lives = 3; combo = 0;
   powerTime = 0; invuln = 0; shield = curShip().startShield; scoreMult = 0; weapon = 0; fireTimer = 0;
   level = 1;
@@ -953,7 +969,7 @@ function startGame() {
 function hideHint() { const h = document.getElementById('hint'); h.classList.remove('hide'); setTimeout(() => h.classList.add('hide'), 2800); }
 
 // ============ 暂停 / 音效 / 操控 ============
-function togglePause() { ensureAudio(); if (state === 'play') state = 'paused'; else if (state === 'paused') state = 'play'; updatePauseBtn(); }
+function togglePause() { unlockAudio(); if (state === 'play') state = 'paused'; else if (state === 'paused') state = 'play'; updatePauseBtn(); }
 function updatePauseBtn() {
   const b = document.getElementById('pauseBtn');
   const playing = state === 'play' || state === 'paused';
@@ -987,7 +1003,7 @@ window.addEventListener('keyup', (e) => { keys[(e.key || '').toLowerCase()] = fa
 
 // ============ 输入：拖动 / 摇杆（Pointer Events） ============
 canvas.addEventListener('pointerdown', (e) => {
-  ensureAudio();
+  unlockAudio();
   if (state === 'paused') { togglePause(); return; }   // 点击恢复
   if (state !== 'play') return;
   if (joyMode) {
@@ -1030,7 +1046,13 @@ const endDrag = (e) => { if (drag && e.pointerId === drag.id) drag = null; if (j
 canvas.addEventListener('pointerup', onPointerUp);
 canvas.addEventListener('pointercancel', endDrag);
 canvas.addEventListener('pointerleave', endDrag);
-document.addEventListener('click', () => { ensureAudio(); });
+// 首次用户手势(任一)即解锁音频（手机/浏览器自动播放策略）
+const audioUnlock = () => unlockAudio();
+window.addEventListener('pointerdown', audioUnlock, { capture: true });
+window.addEventListener('touchstart', audioUnlock, { capture: true, passive: true });
+window.addEventListener('mousedown', audioUnlock, { capture: true });
+window.addEventListener('click', audioUnlock, { capture: true });
+window.addEventListener('keydown', audioUnlock, { capture: true });
 
 // ============ 菜单选择器 ============
 function setupSelectors() {
